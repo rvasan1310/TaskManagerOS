@@ -1,0 +1,22 @@
+package com.example.taskmanager.config;
+
+import org.springframework.context.annotation.Configuration;
+import org.springframework.web.servlet.config.annotation.ViewControllerRegistry;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+
+/**
+ * Forward any non-API, non-file path (e.g. /items) to /index.html
+ * so that deep-links work for the static dashboard.
+ */
+@Configuration
+public class SpaForwardingConfig implements WebMvcConfigurer {
+    @Override
+    public void addViewControllers(ViewControllerRegistry registry) {
+        // Forward root to index.html
+        registry.addViewController("/").setViewName("forward:/index.html");
+        // Forward any single-level path without a dot (e.g., /items) to index.html
+        registry.addViewController("/{x:^(?!api$).*$}").setViewName("forward:/index.html");
+        // Forward two-level paths too (optional)
+        registry.addViewController("/{x:^(?!api$).*$}/{y:^(?!api$).*$}").setViewName("forward:/index.html");
+    }
+}

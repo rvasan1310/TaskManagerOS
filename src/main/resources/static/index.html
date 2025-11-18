@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Advanced System Process Monitor (Spring)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <style>
+    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,'Helvetica Neue',Arial,'Noto Sans',sans-serif;background:#0b1220;color:#e5e7eb}
+    .container{max-width:1200px;margin:24px auto;padding:0 16px}
+    .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+    .title{font-weight:800;font-size:24px}
+    .cards{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px}
+    .card{background:linear-gradient(135deg,#0f172a,#0b1220);border:1px solid #253044;border-radius:12px;padding:12px}
+    .label{font-size:12px;color:#94a3b8}
+    .value{font-weight:700;font-size:20px;margin-top:4px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
+    .section{background:#0b1220;border:1px solid #253044;border-radius:12px;padding:12px}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:8px;border-bottom:1px solid #1f2937;font-size:12px}
+    th{color:#cbd5e1;text-align:left}
+    td{color:#e5e7eb}
+    .btn{background:#2563eb;color:white;border:none;border-radius:8px;padding:8px 12px;cursor:pointer}
+    .bad{color:#f87171}
+    .warn{color:#fbbf24}
+    .good{color:#34d399}
+    .toolbar{display:flex;gap:8px;margin:8px 0}
+    input,select{background:#111827;border:1px solid #374151;color:#e5e7eb;border-radius:8px;padding:8px}
+    .footer{margin-top:20px;color:#94a3b8;font-size:12px}
+    @media (max-width:1000px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.grid{grid-template-columns:1fr}}
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div>
+      <div class="title">Advanced System Process Monitor</div>
+      <div style="color:#94a3b8;font-size:12px">Real-time OS Resource Analytics & Process Management (Spring Boot)</div>
+      <div id="uptime" style="color:#64748b;font-size:12px;margin-top:4px">Uptime: 0s</div>
+    </div>
+    <button id="pauseBtn" class="btn">Pause</button>
+  </div>
+
+  <div class="cards">
+    <div class="card"><div class="label">CPU Usage</div><div id="cpuVal" class="value">0%</div><div class="label" id="cpuCores">Cores: 0</div></div>
+    <div class="card"><div class="label">Memory</div><div id="memVal" class="value">0 MB</div><div class="label" id="memPct">0%</div></div>
+    <div class="card"><div class="label">Disk I/O</div><div id="diskVal" class="value">0%</div></div>
+    <div class="card"><div class="label">Network In</div><div id="netInVal" class="value">0 KB/s</div></div>
+    <div class="card"><div class="label">Network Out</div><div id="netOutVal" class="value">0 KB/s</div></div>
+    <div class="card"><div class="label">Threads</div><div id="threadsVal" class="value">0</div><div class="label" id="procCount">0 processes</div></div>
+  </div>
+
+  <div class="grid">
+    <div class="section">
+      <div class="label">CPU % (last 60s)</div>
+      <canvas id="cpuChart" height="160"></canvas>
+    </div>
+    <div class="section">
+      <div class="label">Memory % (last 60s)</div>
+      <canvas id="memChart" height="160"></canvas>
+    </div>
+  </div>
+
+  <div class="section" style="margin-top:16px;">
+    <div class="toolbar">
+      <input id="search" placeholder="Search processes..."/>
+      <select id="status">
+        <option value="all">All Status</option>
+        <option value="Running">Running</option>
+        <option value="Sleeping">Sleeping</option>
+      </select>
+      <div class="label" id="countLabel"></div>
+    </div>
+    <div style="overflow:auto;">
+      <table id="procTable">
+        <thead>
+        <tr>
+          <th>PID</th><th>Name</th><th>Type</th><th>CPU %</th><th>Memory (MB)</th><th>Disk (MB/s)</th>
+          <th>Threads</th><th>Status</th><th>User</th><th>Actions</th>
+        </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="footer">Developed by Shivam Patel & Ram Vasani — Spring Boot simulation of your React monitor</div>
+</div>
+
+<script>
+  let paused = false;
+  const pauseBtn = document.getElementById('pauseBtn');
+  pauseBtn.onclick = () => { paused = !paused; pauseBtn.textContent = paused ? 'Resume' : 'Pause'; };
+
+  const cpuCtx = document.getElementById('cpuChart');
+  const memCtx = document.getElementById('memChart');
+
+  const cpuData = { labels: [], datasets: [{label:'CPU %', data:[], borderWidth:2, tension:0.35}]};
+  const memData = { labels: [], datasets: [{label:'Memory %', data:[], borderWidth:2, tension:0.35}]};
+
+  const cpuChart = new Chart(cpuCtx, { type:'line', data:cpuData,
+    options:{responsive:true, animation:false, scales:{y:{min:0,max:100}}}});
+  const memChart = new Chart(memCtx, { type:'line', data:memData,
+    options:{responsive:true, animation:false, scales:{y:{min:0,max:100}}}});
+
+  const fmtBytes = (mb) => {
+    if (mb < 1024) return `${mb.toFixed(0)} MB`;
+    return `${(mb/1024).toFixed(2)} GB`;
+  };
+
+  async function fetchStats() {
+    const res = await fetch('/api/stats');
+    return res.json();
+  }
+  async function fetchProcesses() {
+    const res = await fetch('/api/processes');
+    return res.json();
+  }
+  async function kill(pid) {
+    const res = await fetch(`/api/kill/${pid}`, {method:'POST'});
+    if (!res.ok) {
+      const txt = await res.text();
+      alert(txt || 'Failed to kill process');
+    }
+  }
+
+  const cpuVal = document.getElementById('cpuVal');
+  const cpuCores = document.getElementById('cpuCores');
+  const memVal = document.getElementById('memVal');
+  const memPct = document.getElementById('memPct');
+  const diskVal = document.getElementById('diskVal');
+  const netInVal = document.getElementById('netInVal');
+  const netOutVal = document.getElementById('netOutVal');
+  const threadsVal = document.getElementById('threadsVal');
+  const procCount = document.getElementById('procCount');
+  const uptime = document.getElementById('uptime');
+  const tbody = document.querySelector('#procTable tbody');
+  const search = document.getElementById('search');
+  const statusSel = document.getElementById('status');
+  const countLabel = document.getElementById('countLabel');
+
+  let lastProcs = [];
+
+  function renderTable() {
+    const term = (search.value || '').toLowerCase();
+    const st = statusSel.value;
+    const filtered = lastProcs.filter(p => {
+      const m1 = p.name.toLowerCase().includes(term);
+      const m2 = (st === 'all') || (p.status === st);
+      return m1 && m2;
+    });
+    countLabel.textContent = `${filtered.length} processes`;
+    tbody.innerHTML = '';
+    for (const p of filtered.sort((a,b) => b.cpu - a.cpu)) {
+      const tr = document.createElement('tr');
+      const cpuClass = p.cpu > 50 ? 'bad' : (p.cpu > 20 ? 'warn' : 'good');
+      tr.innerHTML = `
+        <td>${p.pid}</td>
+        <td>${p.name}</td>
+        <td>${p.type}</td>
+        <td class="${cpuClass}">${p.cpu.toFixed(1)}</td>
+        <td>${p.memory.toFixed(0)}</td>
+        <td>${p.disk.toFixed(1)}</td>
+        <td>${p.threads}</td>
+        <td>${p.status}</td>
+        <td>${p.user}</td>
+        <td><button class="btn" data-pid="${p.pid}">Kill</button></td>
+      `;
+      tbody.appendChild(tr);
+    }
+    tbody.querySelectorAll('button[data-pid]').forEach(btn => {
+      btn.onclick = async () => {
+        const pid = btn.getAttribute('data-pid');
+        if (confirm(`Terminate PID ${pid}? This may cause instability.`)) {
+          await kill(pid);
+        }
+      };
+    });
+  }
+
+  async function loop() {
+    if (!paused) {
+      const s = await fetchStats();
+      cpuVal.textContent = `${s.cpuUsage.toFixed(1)}%`;
+      cpuCores.textContent = `Cores: ${s.cpuCores}`;
+      memVal.textContent = fmtBytes(s.usedMemory);
+      memPct.textContent = `${s.memoryUsage.toFixed(1)}% of ${fmtBytes(s.totalMemory)}`;
+      diskVal.textContent = `${s.diskUsage.toFixed(1)}%`;
+      netInVal.textContent = `${s.networkIn.toFixed(1)} KB/s`;
+      netOutVal.textContent = `${s.networkOut.toFixed(1)} KB/s`;
+      threadsVal.textContent = s.activeThreads;
+      uptime.textContent = `Uptime: ${Math.floor(s.uptime/3600)}h ${Math.floor((s.uptime%3600)/60)}m ${s.uptime%60}s`;
+
+      const ts = new Date().toLocaleTimeString();
+      cpuChart.data.labels.push(ts); cpuChart.data.datasets[0].data.push(s.cpuUsage);
+      memChart.data.labels.push(ts); memChart.data.datasets[0].data.push(s.memoryUsage);
+      if (cpuChart.data.labels.length > 60) { cpuChart.data.labels.shift(); cpuChart.data.datasets[0].data.shift(); }
+      if (memChart.data.labels.length > 60) { memChart.data.labels.shift(); cpuChart.data.datasets[0].data.shift(); }
+      cpuChart.update(); memChart.update();
+
+      lastProcs = await fetchProcesses();
+      procCount.textContent = `${lastProcs.length} processes`;
+      renderTable();
+    }
+    setTimeout(loop, 1000);
+  }
+
+  search.oninput = renderTable;
+  statusSel.onchange = renderTable;
+  loop();
+</script>
+</body>
+</html>
